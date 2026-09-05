@@ -1,150 +1,98 @@
 import javax.swing.*;
 import java.awt.*;
-import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Stack;
+import java.util.List;
 
 public class MazePanel extends JPanel {
+    private MazeModel mazeModel;
+    private RenderConfig config;
+    private List<Point> solutionPath;
+    private int currentStepIndex = -1;
 
-    private int cols;
-    private int rows;
-    private String wallColorHex;
-    private String pathColorHex;
-    private boolean drawGrid;
-    private String gridColorHex;
+    private static final int CELL_SIZE = 20; // גודל קבוע לכל ריבוע: 20x20 פיקסלים
 
-    // מטריקס למבוך (0 = נתיב פתוח, 1 = קיר)
-    private int[][] mazeData;
+    public MazePanel(MazeModel mazeModel, RenderConfig config, List<Point> solutionPath) {
+        this.mazeModel = mazeModel;
+        this.config = config;
+        this.solutionPath = solutionPath;
+        setBackground(Color.WHITE);
 
-    public MazePanel(int cols, int rows, String wallColorHex, String pathColorHex, boolean drawGrid, String gridColorHex) {
-        // דאגה שמידות המסגרת יהיו אי-זוגיות כמפורט באלגוריתם כדי למנוע בעיות חישוב
-        this.cols = (cols % 2 == 0) ? cols + 1 : cols;
-        this.rows = (rows % 2 == 0) ? rows + 1 : rows;
-
-        this.wallColorHex = wallColorHex;
-        this.pathColorHex = pathColorHex;
-        this.drawGrid = drawGrid;
-        this.gridColorHex = gridColorHex;
-
-        // יצירת מבוך אמיתי לפי אלגוריתם Recursive Backtracking
-        generateRecursiveBacktrackingMaze();
+        // קביעת הגודל המועדף של הפאנל כך שיתאים בדיוק לחישוב של 20 פיקסל לכל תא
+        if (mazeModel != null) {
+            int totalWidth = mazeModel.getWidth() * CELL_SIZE;
+            int totalHeight = mazeModel.getHeight() * CELL_SIZE;
+            setPreferredSize(new Dimension(totalWidth, totalHeight));
+        }
     }
 
-    private void generateRecursiveBacktrackingMaze() {
-        mazeData = new int[rows][cols];
-
-        // שלב 1: הכל מלא בקירות (1)
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                mazeData[r][c] = 1;
-            }
-        }
-
-        Stack<Point> stack = new Stack<>();
-
-        // שלב ההתחלה: מתחילים מתא (1, 1) והופכים אותו למעבר (0)
-        int startR = 1;
-        int startC = 1;
-        mazeData[startR][startC] = 0;
-        stack.push(new Point(startC, startR)); // Point מקבל (x=col, y=row)
-
-        while (!stack.isEmpty()) {
-            Point current = stack.peek();
-            int r = current.y;
-            int c = current.x;
-
-            // בדיקת 4 השכנים במרחק 2 משבצות (למעלה, למטה, שמאלה, ימינה)
-            java.util.List<int[]> neighbors = new ArrayList<>();
-
-            int[] dRows = {-2, 2, 0, 0};
-            int[] dCols = {0, 0, -2, 2};
-
-            for (int i = 0; i < 4; i++) {
-                int nr = r + dRows[i];
-                int nc = c + dCols[i];
-
-                // בדיקה שהשכן בתוך גבולות המבוך ושטרם ביקרו בו (הוא עדיין קיר 1)
-                if (nr > 0 && nr < rows - 1 && nc > 0 && nc < cols - 1) {
-                    if (mazeData[nr][nc] == 1) {
-                        neighbors.add(new int[]{nr, nc, i}); // שומרים גם את כיוון הצעד
-                    }
-                }
-            }
-
-            if (!neighbors.isEmpty()) {
-                // שבירת קירות: בחירת שכן אקראי מבין השכנים הלא מבוקרים
-                Collections.shuffle(neighbors);
-                int[] chosen = neighbors.get(0);
-                int nr = chosen[0];
-                int nc = chosen[1];
-                int direction = chosen[2];
-
-                // הפיכת התא החדש למעבר (0)
-                mazeData[nr][nc] = 0;
-
-                // שבירת הקיר שבינו לבין התא הנוכחי (התא האמצעי ביניהם)
-                int wallR = r + (nr - r) / 2;
-                int wallC = c + (nc - c) / 2;
-                mazeData[wallR][wallC] = 0;
-
-                // דחיפה למחסנית כדי להמשיך ממנו
-                stack.push(new Point(nc, nr));
-            } else {
-                // חזרה אחורה (Backtracking) כשנתקעים
-                stack.pop();
-            }
-        }
-
-        // נקודת סיום מובטחת בפינה הימנית-תחתונה
-        mazeData[rows - 2][cols - 2] = 0;
+    public void setCurrentStepIndex(int index) {
+        this.currentStepIndex = index;
+        repaint();
     }
 
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
+        if (mazeModel == null) return;
 
-        int panelWidth = getWidth();
-        int panelHeight = getHeight();
+        int cols = mazeModel.getWidth();
+        int rows = mazeModel.getHeight();
+        MazeModel.CellType[][] grid = mazeModel.getGrid();
 
-        int cellWidth = panelWidth / cols;
-        int cellHeight = panelHeight / rows;
-
-        Color wallColor = parseColor(wallColorHex, Color.BLACK);
-        Color pathColor = parseColor(pathColorHex, Color.WHITE);
-        Color gridColor = parseColor(gridColorHex, Color.LIGHT_GRAY);
-
-        // ציור המבוך על המסך
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                if (mazeData[r][c] == 1) {
-                    g.setColor(wallColor);
+        // ציור הקירות והמעברים בגודל מדויק של 20x20
+        for (int y = 0; y < rows; y++) {
+            for (int x = 0; x < cols; x++) {
+                if (grid[y][x] == MazeModel.CellType.WALL) {
+                    g.setColor(parseColor(config.getWallColor(), Color.BLACK));
                 } else {
-                    g.setColor(pathColor);
+                    g.setColor(Color.WHITE);
                 }
-                g.fillRect(c * cellWidth, r * cellHeight, cellWidth, cellHeight);
+                g.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            }
+        }
 
-                if (drawGrid) {
-                    g.setColor(gridColor);
-                    g.drawRect(c * cellWidth, r * cellHeight, cellWidth, cellHeight);
-                }
+        // ציור מסלול הפתרון באנימציה
+        if (solutionPath != null && currentStepIndex >= 0) {
+            g.setColor(parseColor(config.getPathColor(), Color.RED));
+            int limit = Math.min(currentStepIndex, solutionPath.size());
+            for (int i = 0; i < limit; i++) {
+                Point p = solutionPath.get(i);
+                // ציור מודגש בתוך הריבוע של ה-20x20
+                g.fillRect((p.x * CELL_SIZE) + 4, (p.y * CELL_SIZE) + 4, CELL_SIZE - 8, CELL_SIZE - 8);
+            }
+        }
+
+        // ציור רשת (Grid) אם מוגדר
+        if (config.isDrawGrid()) {
+            g.setColor(parseColor(config.getGridColor(), Color.LIGHT_GRAY));
+            for (int x = 0; x <= cols; x++) {
+                g.drawLine(x * CELL_SIZE, 0, x * CELL_SIZE, rows * CELL_SIZE);
+            }
+            for (int y = 0; y <= rows; y++) {
+                g.drawLine(0, y * CELL_SIZE, cols * CELL_SIZE, y * CELL_SIZE);
             }
         }
     }
 
     private Color parseColor(String colorStr, Color defaultColor) {
-        if (colorStr == null || colorStr.isEmpty()) {
-            return defaultColor;
-        }
+        if (colorStr == null || colorStr.trim().isEmpty()) return defaultColor;
         try {
             if (colorStr.startsWith("#")) {
                 return Color.decode(colorStr);
-            } else {
-                Field field = Color.class.getField(colorStr.toUpperCase());
-                return (Color) field.get(null);
             }
-        } catch (Exception e) {
-            return defaultColor;
-        }
+            switch (colorStr.toLowerCase()) {
+                case "black": return Color.BLACK;
+                case "white": return Color.WHITE;
+                case "red": return Color.RED;
+                case "blue": return Color.BLUE;
+                case "green": return Color.GREEN;
+                case "yellow": return Color.YELLOW;
+                case "gray": return Color.GRAY;
+                case "orange": return Color.ORANGE;
+                case "pink": return Color.PINK;
+                case "cyan": return Color.CYAN;
+                case "magenta": return Color.MAGENTA;
+            }
+        } catch (Exception ignored) {}
+        return defaultColor;
     }
 }
